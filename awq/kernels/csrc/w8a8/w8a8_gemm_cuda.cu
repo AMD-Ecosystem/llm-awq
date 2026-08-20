@@ -11,7 +11,9 @@
 
 #include "w8a8_gemm_cuda.h"
 #include <cuda_fp16.h>
+#if !defined(__HIP_PLATFORM_AMD__)
 #include <cuda_pipeline_primitives.h>
+#endif
 #include <torch/extension.h>
 
 #define OP_M 16
@@ -86,6 +88,11 @@
 
 
       
+// The W8A8 GEMM is built entirely on NVIDIA int8 tensor-core PTX
+// (mma.sync.m16n8k32.s8.s8.s32 + ldmatrix + cp.async). It is not exercised by
+// the W4A16 quantized linear path. On HIP it is compiled as a build-only stub;
+// a future AMD-native rewrite would use int8 MFMA.
+#if !defined(__HIP_PLATFORM_AMD__)
 template <int N>
 __inline__ __host__ __device__ int get_log_tile(int n)
 {
@@ -951,3 +958,24 @@ void w8a8_gemm_forward_cuda(torch::Tensor _in_feats,
   }
   return ;
 }
+#else // __HIP_PLATFORM_AMD__
+
+void w8a8_gemm_fuse_bias_forward_cuda(torch::Tensor _in_feats,
+                                      torch::Tensor _kernel,
+                                      torch::Tensor _wscales,
+                                      torch::Tensor _ascales,
+                                      torch::Tensor _out_feats,
+                                      torch::Tensor _bias)
+{
+  TORCH_CHECK(false, "w8a8_gemm_fuse_bias_forward_cuda (int8 MMA) is not implemented on HIP.");
+}
+
+void w8a8_gemm_forward_cuda(torch::Tensor _in_feats,
+                            torch::Tensor _kernel,
+                            torch::Tensor _wscales,
+                            torch::Tensor _ascales,
+                            torch::Tensor _out_feats)
+{
+  TORCH_CHECK(false, "w8a8_gemm_forward_cuda (int8 MMA) is not implemented on HIP.");
+}
+#endif // __HIP_PLATFORM_AMD__

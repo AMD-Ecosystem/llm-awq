@@ -17,12 +17,18 @@
  */
 
 #include "decoder_masked_multihead_attention.h"
-#include "decoder_masked_multihead_attention_utils.h"
 #include "cuda_bf16_wrapper.h"
 #include <assert.h>
 #include <float.h>
 #include <type_traits>
 
+// The FasterTransformer single-query masked-MHA kernel is built on NVIDIA
+// half/bf16 PTX (mma.sync.m16n8k8, add/mul/cvt.f16x2, ...). It is reached only
+// through the TinyChat fused-attention path, not the quantized-linear forward.
+// On HIP it is compiled as a build-only stub; a future port would rewrite the
+// kernel in portable HIP.
+#if !defined(__HIP_PLATFORM_AMD__)
+#include "decoder_masked_multihead_attention_utils.h"
 #include "decoder_masked_multihead_attention_template.hpp"
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -103,6 +109,14 @@ void multihead_attention_(const KERNEL_PARAMS_TYPE& params, const cudaStream_t& 
             assert(false);
     }
 }
+#else // __HIP_PLATFORM_AMD__
+template<typename T, typename KERNEL_PARAMS_TYPE>
+void multihead_attention_(const KERNEL_PARAMS_TYPE& params, const cudaStream_t& stream)
+{
+    fprintf(stderr, "single_query_attention (FasterTransformer masked-MHA) is not implemented on HIP.\n");
+    abort();
+}
+#endif // __HIP_PLATFORM_AMD__
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 

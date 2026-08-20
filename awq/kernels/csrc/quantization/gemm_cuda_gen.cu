@@ -28,8 +28,9 @@ __device__ __forceinline__ int make_divisible(int c, int divisor){
   return (c + divisor - 1) / divisor;
 }
 
+#if !defined(__HIP_PLATFORM_AMD__)
 template <int G>
-__global__ void __launch_bounds__(128) gemm_forward_4bit_cuda_m128n64k32(int split_k_iters, half* __restrict__ A, int* __restrict__ B, half* __restrict__ scaling_factors, int* zeros, int M, int IC, int OC, half* __restrict__ C) 
+__global__ void __launch_bounds__(128) gemm_forward_4bit_cuda_m128n64k32(int split_k_iters, half* __restrict__ A, int* __restrict__ B, half* __restrict__ scaling_factors, int* zeros, int M, int IC, int OC, half* __restrict__ C)
 {
   static constexpr uint32_t ZERO = 0x0;
   float C_warp[64];
@@ -242,6 +243,8 @@ __global__ void __launch_bounds__(128) gemm_forward_4bit_cuda_m128n64k32(int spl
 // zeros: IC // G, OC // 8 [int32] -> cast to IC // G, OC [uint4b]
 // assume that batch_size < 16 for now
 
+#endif // !__HIP_PLATFORM_AMD__
+
 torch::Tensor gemm_forward_cuda(
     torch::Tensor _in_feats,
     torch::Tensor _kernel,
@@ -250,6 +253,12 @@ torch::Tensor gemm_forward_cuda(
     int group_size,
     int split_k_iters)
 {
+#if defined(__HIP_PLATFORM_AMD__)
+    // Legacy tensor-core GEMM; the active W4A16 path is gemm_forward_cuda_new
+    // (portable on HIP). This entry is unused by the quantized linear modules.
+    TORCH_CHECK(false, "gemm_forward_cuda (legacy MMA path) is not implemented on HIP; use gemm_forward_cuda_new.");
+    return _in_feats;
+#else
     int num_in_feats = _in_feats.size(0);
     int num_in_channels = _in_feats.size(1);
     const at::cuda::OptionalCUDAGuard device_guard(device_of(_in_feats));
@@ -294,5 +303,6 @@ torch::Tensor gemm_forward_cuda(
       throw std::invalid_argument("Group size temporarily not supported.");
     }
     return _out_feats.sum(0);
+#endif // __HIP_PLATFORM_AMD__
 }
 
