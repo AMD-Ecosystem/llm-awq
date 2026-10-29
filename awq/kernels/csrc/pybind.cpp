@@ -1,22 +1,6 @@
 #include <pybind11/pybind11.h>
 #include <torch/extension.h>
-#if !defined(AWQ_DISABLE_ATTENTION)
 #include "attention/ft_attention.h"
-#else
-// Attention sources are excluded on ROCm (NVIDIA-PTX-only masked-MHA kernel).
-// Provide a throwing stub so the binding stays present and self-documenting.
-static torch::Tensor single_query_attention(
-    const torch::Tensor q, const torch::Tensor k, const torch::Tensor v,
-    torch::Tensor k_cache, torch::Tensor v_cache,
-    c10::optional<const torch::Tensor> length_per_sample_,
-    c10::optional<const torch::Tensor> alibi_slopes_, const int timestep,
-    const int rotary_embedding_dim = 0, const float rotary_base = 10000.0f,
-    const float rotary_scale = 1.0f, const bool neox_rotary_style = true)
-{
-    TORCH_CHECK(false, "single_query_attention is not implemented on ROCm (NVIDIA tensor-core masked-MHA kernel).");
-    return q;
-}
-#endif
 #include "layernorm/layernorm.h"
 #include "quantization/gemm_cuda.h"
 #include "quantization/gemv_cuda.h"

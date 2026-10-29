@@ -17,19 +17,47 @@
  */
 
 #include "decoder_masked_multihead_attention.h"
+#include "decoder_masked_multihead_attention_utils.h"
 #include "cuda_bf16_wrapper.h"
 #include <assert.h>
 #include <float.h>
 #include <type_traits>
 
-// The FasterTransformer single-query masked-MHA kernel is built on NVIDIA
-// half/bf16 PTX (mma.sync.m16n8k8, add/mul/cvt.f16x2, ...). It is reached only
-// through the TinyChat fused-attention path, not the quantized-linear forward.
-// On HIP it is compiled as a build-only stub; a future port would rewrite the
-// kernel in portable HIP.
-#if !defined(__HIP_PLATFORM_AMD__)
-#include "decoder_masked_multihead_attention_utils.h"
 #include "decoder_masked_multihead_attention_template.hpp"
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+#if defined(__HIP_PLATFORM_AMD__)
+#include <stdexcept>
+#include <string>
+
+// The logits buffer in shared memory grows with the sequence length, and AMD GPUs typically have
+// 64 KiB of LDS per workgroup, below the CUDA opt-in limit. A launch that does not fit fails without
+// producing output, so refuse it explicitly.
+static void mmha_set_max_dynamic_smem_size(const void* kernel, size_t smem_sz)
+{
+    int device = 0;
+    int max_smem = 0;
+    hipFuncAttributes attr;
+    if (hipGetDevice(&device) != hipSuccess
+        || hipDeviceGetAttribute(&max_smem, hipDeviceAttributeMaxSharedMemoryPerBlock, device) != hipSuccess
+        || hipFuncGetAttributes(&attr, kernel) != hipSuccess) {
+        throw std::runtime_error("single_query_attention: failed to query the shared memory limit");
+    }
+    if (smem_sz + attr.sharedSizeBytes > static_cast<size_t>(max_smem)) {
+        throw std::runtime_error("single_query_attention: the sequence length needs "
+                                 + std::to_string(smem_sz + attr.sharedSizeBytes)
+                                 + " bytes of shared memory, more than the " + std::to_string(max_smem)
+                                 + " bytes available on this GPU");
+    }
+    hipFuncSetAttribute(kernel, hipFuncAttributeMaxDynamicSharedMemorySize, smem_sz);
+}
+#define MMHA_SET_MAX_DYNAMIC_SMEM_SIZE(kernel, smem_sz)                                                                \
+    mmha_set_max_dynamic_smem_size(reinterpret_cast<const void*>(kernel), smem_sz)
+#else
+#define MMHA_SET_MAX_DYNAMIC_SMEM_SIZE(kernel, smem_sz)                                                                \
+    cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, smem_sz)
+#endif
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -38,7 +66,7 @@
     auto kernel = mmha::masked_multihead_attention_kernel<T, Dh, Dh_MAX, THDS_PER_KEY, THDS_PER_VALUE,                 \
                                                           THDS_PER_BLOCK, DO_CROSS_ATTENTION>;                         \
     if (smem_sz >= 48 * 1024) {                                                                                        \
-        cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, smem_sz);                            \
+        MMHA_SET_MAX_DYNAMIC_SMEM_SIZE(kernel, smem_sz);                                                               \
     }                                                                                                                  \
     dim3 grid(params.num_heads, params.batch_size);                                                                    \
     kernel<<<grid, THDS_PER_BLOCK, smem_sz, stream>>>(params)
@@ -109,14 +137,6 @@ void multihead_attention_(const KERNEL_PARAMS_TYPE& params, const cudaStream_t& 
             assert(false);
     }
 }
-#else // __HIP_PLATFORM_AMD__
-template<typename T, typename KERNEL_PARAMS_TYPE>
-void multihead_attention_(const KERNEL_PARAMS_TYPE& params, const cudaStream_t& stream)
-{
-    fprintf(stderr, "single_query_attention (FasterTransformer masked-MHA) is not implemented on HIP.\n");
-    abort();
-}
-#endif // __HIP_PLATFORM_AMD__
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
