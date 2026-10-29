@@ -33,7 +33,7 @@ __device__ __forceinline__ int make_divisible(int c, int divisor){
 
 #if !defined(__HIP_PLATFORM_AMD__)
 template <int G>
-__global__ void __launch_bounds__(128) gemm_forward_4bit_cuda_m128n64k32(int split_k_iters, half* __restrict__ A, int* __restrict__ B, half* __restrict__ scaling_factors, int* zeros, int M, int IC, int OC, half* __restrict__ C)
+__global__ void __launch_bounds__(128) gemm_forward_4bit_cuda_m128n64k32(int split_k_iters, half* __restrict__ A, int* __restrict__ B, half* __restrict__ scaling_factors, int* zeros, int M, int IC, int OC, half* __restrict__ C) 
 {
   static constexpr uint32_t ZERO = 0x0;
   float C_warp[64];
@@ -322,7 +322,6 @@ __global__ void __launch_bounds__(256) gemm_forward_4bit_simt(const half* __rest
 }
 
 #endif // __HIP_PLATFORM_AMD__
-
 torch::Tensor gemm_forward_cuda(
     torch::Tensor _in_feats,
     torch::Tensor _kernel,
