@@ -74,6 +74,9 @@ sources = [
     "csrc/w8a8/layernorm.cu",
 ]
 
+# The W8A8 GEMM calls hipBLASLt directly on ROCm.
+libraries = ["hipblaslt"] if IS_ROCM else []
+
 if IS_ROCM and sys.platform == "win32":
     # On Windows+ROCm, torch routes .cpp files through MSVC (cl.exe), which
     # cannot parse the GCC __attribute__ syntax in HIP runtime headers pulled
@@ -105,6 +108,7 @@ setup(
             name="awq_inference_engine",
             sources=sources,
             extra_compile_args=extra_compile_args,
+            libraries=libraries,
         ),
     ],
     cmdclass={"build_ext": BuildExtension.with_options(use_ninja=use_ninja)},
