@@ -47,9 +47,9 @@ else:
     ]
 
 cxx_args = ["-g", "-O3", "-std=c++20", "-DENABLE_BF16"]
-if not (sys.platform == "win32" and IS_ROCM):
-    # -fopenmp/-lgomp are Linux GCC flags; on Windows+ROCm the pybind .cpp
-    # is routed through hipcc (amdclang), which does not need them.
+if not IS_ROCM:
+    # -fopenmp/-lgomp are Linux GCC flags; on ROCm every .cpp source is
+    # routed through hipcc (amdclang), which does not need them.
     cxx_args += ["-fopenmp", "-lgomp"]
 
 extra_compile_args = {
@@ -77,16 +77,17 @@ sources = [
 # The W8A8 GEMM calls hipBLASLt directly on ROCm.
 libraries = ["hipblaslt"] if IS_ROCM else []
 
-if IS_ROCM and sys.platform == "win32":
-    # On Windows+ROCm, torch routes .cpp files through MSVC (cl.exe), which
-    # cannot parse the GCC __attribute__ syntax in HIP runtime headers pulled
-    # in through torch/extension.h. Copy each .cpp source to a *_winhip.cu
-    # shim so the .cu extension routes it through hipcc (amdclang) instead.
+if IS_ROCM:
+    # On ROCm, torch compiles .cpp files with the host compiler (MSVC on
+    # Windows, which cannot parse the GCC __attribute__ syntax in the HIP
+    # runtime headers; g++ on Linux, which some ROCm releases' HIP bf16
+    # header fails under). Copy each .cpp source to a *_cpp_shim.cu shim so
+    # the .cu extension routes it through hipcc (amdclang) instead.
     # The shim is transient; do NOT commit it (it is gitignored).
     new_sources = []
     for s in sources:
         if s.endswith(".cpp"):
-            shim = s[:-4] + "_winhip.cu"
+            shim = s[:-4] + "_cpp_shim.cu"
             shim_abs = os.path.join(THIS_DIR, shim)
             src_abs = os.path.join(THIS_DIR, s)
             if not os.path.exists(shim_abs) or os.path.getmtime(src_abs) > os.path.getmtime(shim_abs):
