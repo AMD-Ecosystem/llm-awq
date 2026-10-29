@@ -966,15 +966,16 @@ void w8a8_gemm_forward_cuda(torch::Tensor _in_feats,
 
 // C[m][n] = sum_k A[m][k] * B[n][k], A: [M, K], B: [N, K], C: [M, N] (int32), all row-major.
 static bool w8a8_int8_gemm_hipblaslt(const int8_t *A, const int8_t *B, int32_t *C, int M, int N, int K,
-                                     hipStream_t stream)
+                                     hipStream_t stream, const at::TensorOptions &options)
 {
   // hipBLASLt is column-major: compute C^T [N, M] = B [N, K] x A^T [K, M].
   hipblasLtHandle_t handle = at::cuda::getCurrentCUDABlasLtHandle();
   hipblasLtMatmulDesc_t op = nullptr;
   hipblasLtMatrixLayout_t a_desc = nullptr, b_desc = nullptr, c_desc = nullptr;
   hipblasLtMatmulPreference_t pref = nullptr;
-  size_t workspace_size = at::cuda::getCUDABlasLtWorkspaceSize();
-  void *workspace = at::cuda::getCUDABlasLtWorkspace();
+  // The workspace comes from the caching allocator on the current stream, sized to what the
+  // selected solution asks for (int8 solutions usually need none).
+  size_t max_workspace_size = 32 * 1024 * 1024;
   hipblasOperation_t trans_a = HIPBLAS_OP_T, trans_b = HIPBLAS_OP_N;
   hipblasLtMatmulHeuristicResult_t heuristic = {};
   int returned = 0;
@@ -985,16 +986,21 @@ static bool w8a8_int8_gemm_hipblaslt(const int8_t *A, const int8_t *B, int32_t *
             hipblasLtMatrixLayoutCreate(&b_desc, HIP_R_8I, K, M, K) == HIPBLAS_STATUS_SUCCESS &&
             hipblasLtMatrixLayoutCreate(&c_desc, HIP_R_32I, N, M, N) == HIPBLAS_STATUS_SUCCESS &&
             hipblasLtMatmulPreferenceCreate(&pref) == HIPBLAS_STATUS_SUCCESS &&
-            hipblasLtMatmulPreferenceSetAttribute(pref, HIPBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES, &workspace_size,
-                                                  sizeof(workspace_size)) == HIPBLAS_STATUS_SUCCESS &&
+            hipblasLtMatmulPreferenceSetAttribute(pref, HIPBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES, &max_workspace_size,
+                                                  sizeof(max_workspace_size)) == HIPBLAS_STATUS_SUCCESS &&
             hipblasLtMatmulAlgoGetHeuristic(handle, op, a_desc, b_desc, c_desc, c_desc, pref, 1, &heuristic,
                                             &returned) == HIPBLAS_STATUS_SUCCESS &&
             returned > 0;
   if (ok)
   {
     int32_t alpha = 1, beta = 0;
+    size_t workspace_size = heuristic.workspaceSize;
+    at::Tensor workspace;
+    if (workspace_size > 0)
+      workspace = at::empty({static_cast<int64_t>(workspace_size)}, options.dtype(at::kByte));
     ok = hipblasLtMatmul(handle, op, &alpha, B, a_desc, A, b_desc, &beta, C, c_desc, C, c_desc, &heuristic.algo,
-                         workspace, workspace_size, stream) == HIPBLAS_STATUS_SUCCESS;
+                         workspace_size > 0 ? workspace.data_ptr() : nullptr, workspace_size,
+                         stream) == HIPBLAS_STATUS_SUCCESS;
   }
   if (pref) hipblasLtMatmulPreferenceDestroy(pref);
   if (c_desc) hipblasLtMatrixLayoutDestroy(c_desc);
@@ -1067,7 +1073,7 @@ static void w8a8_gemm_forward_hip(torch::Tensor _in_feats, torch::Tensor _kernel
   auto A = _in_feats.data_ptr<int8_t>();
   auto B = _kernel.data_ptr<int8_t>();
   auto C = psums.data_ptr<int32_t>();
-  if (M > 0 && N > 0 && !w8a8_int8_gemm_hipblaslt(A, B, C, M, N, K, stream))
+  if (M > 0 && N > 0 && !w8a8_int8_gemm_hipblaslt(A, B, C, M, N, K, stream, _in_feats.options()))
   {
     constexpr int TILE_MN = 16, TILE_K = 64;
     dim3 grid((N + TILE_MN - 1) / TILE_MN, (M + TILE_MN - 1) / TILE_MN);
