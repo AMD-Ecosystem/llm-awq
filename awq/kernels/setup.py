@@ -1,6 +1,5 @@
 import os
 import shutil
-import sys
 from setuptools import find_packages, setup
 import torch
 from torch.utils.cpp_extension import BuildExtension, CUDAExtension, CppExtension
@@ -46,7 +45,7 @@ else:
         "--threads=8",
     ]
 
-cxx_args = ["-g", "-O3", "-std=c++20", "-DENABLE_BF16"]
+cxx_args = ["-g", "-O3", "-std=c++17", "-DENABLE_BF16"]
 if not IS_ROCM:
     # -fopenmp/-lgomp are Linux GCC flags; on ROCm every .cpp source is
     # routed through hipcc (amdclang), which does not need them.
@@ -97,10 +96,6 @@ if IS_ROCM:
             new_sources.append(s)
     sources = new_sources
 
-# Use ninja on Windows+ROCm: the non-ninja MSVC compile path does not escape
-# spaces in -I paths, splitting include dirs with spaces when forwarded to hipcc.
-use_ninja = sys.platform == "win32" and IS_ROCM
-
 setup(
     name="awq_inference_engine",
     packages=find_packages(),
@@ -112,6 +107,6 @@ setup(
             libraries=libraries,
         ),
     ],
-    cmdclass={"build_ext": BuildExtension.with_options(use_ninja=use_ninja)},
+    cmdclass={"build_ext": BuildExtension},
     install_requires=["torch"],
 )
