@@ -962,6 +962,13 @@ void w8a8_gemm_forward_cuda(torch::Tensor _in_feats,
 // scaling (and bias) epilogue.
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
+#if __has_include(<hipblaslt/hipblaslt-version.h>)
+#include <hipblaslt/hipblaslt-version.h>
+#endif
+
+// The hipBLASLt calls below take hipDataType and hipblasComputeType_t, which hipBLASLt adopted in
+// 0.6 (ROCm 6.0). Older releases (0.3 in ROCm 5.7) use only the SIMT kernel.
+#if defined(HIPBLASLT_VERSION_MAJOR) && (HIPBLASLT_VERSION_MAJOR > 0 || HIPBLASLT_VERSION_MINOR >= 6)
 #include <hipblaslt/hipblaslt.h>
 #include <mutex>
 #include <vector>
@@ -1030,6 +1037,13 @@ static bool w8a8_int8_gemm_hipblaslt(const int8_t *A, const int8_t *B, int32_t *
   if (op) hipblasLtMatmulDescDestroy(op);
   return ok;
 }
+#else
+static bool w8a8_int8_gemm_hipblaslt(const int8_t *, const int8_t *, int32_t *, int, int, int, hipStream_t,
+                                     const at::TensorOptions &)
+{
+  return false;
+}
+#endif
 
 template <int TILE_MN, int TILE_K>
 __global__ void __launch_bounds__(TILE_MN * TILE_MN) w8a8_int8_gemm_simt(const int8_t *__restrict__ A, const int8_t *__restrict__ B,
