@@ -963,13 +963,34 @@ void w8a8_gemm_forward_cuda(torch::Tensor _in_feats,
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
 #include <hipblaslt/hipblaslt.h>
+#include <mutex>
+#include <vector>
+
+// One hipBLASLt handle per device, created on first use and never destroyed, as PyTorch keeps its
+// own BLAS handles. PyTorch's handle accessor is not declared to extensions on ROCm before 2.4.
+static hipblasLtHandle_t w8a8_hipblaslt_handle()
+{
+  static std::mutex mutex;
+  static std::vector<hipblasLtHandle_t> handles;
+  int device = 0;
+  if (hipGetDevice(&device) != hipSuccess)
+    return nullptr;
+  std::lock_guard<std::mutex> lock(mutex);
+  if (handles.size() <= static_cast<size_t>(device))
+    handles.resize(device + 1, nullptr);
+  if (!handles[device] && hipblasLtCreate(&handles[device]) != HIPBLAS_STATUS_SUCCESS)
+    handles[device] = nullptr;
+  return handles[device];
+}
 
 // C[m][n] = sum_k A[m][k] * B[n][k], A: [M, K], B: [N, K], C: [M, N] (int32), all row-major.
 static bool w8a8_int8_gemm_hipblaslt(const int8_t *A, const int8_t *B, int32_t *C, int M, int N, int K,
                                      hipStream_t stream, const at::TensorOptions &options)
 {
   // hipBLASLt is column-major: compute C^T [N, M] = B [N, K] x A^T [K, M].
-  hipblasLtHandle_t handle = at::cuda::getCurrentCUDABlasLtHandle();
+  hipblasLtHandle_t handle = w8a8_hipblaslt_handle();
+  if (!handle)
+    return false;
   hipblasLtMatmulDesc_t op = nullptr;
   hipblasLtMatrixLayout_t a_desc = nullptr, b_desc = nullptr, c_desc = nullptr;
   hipblasLtMatmulPreference_t pref = nullptr;
