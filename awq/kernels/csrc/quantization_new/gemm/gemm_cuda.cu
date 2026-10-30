@@ -1166,10 +1166,8 @@ torch::Tensor gemm_forward_cuda_new(
     constexpr int N_PER_BLOCK = 2;
     constexpr int K_INTERLEAVE = 4;
     constexpr int BLOCK_SIZE = 256;
-    if (num_in_channels % 128 != 0 || num_out_channels % (N_PER_BLOCK * K_INTERLEAVE) != 0)
-    {
-      TORCH_CHECK(false, "gemm_forward_cuda_new (HIP) requires K %% 128 == 0 and N %% 8 == 0.");
-    }
+    TORCH_CHECK(num_in_channels % 128 == 0 && num_out_channels % (N_PER_BLOCK * K_INTERLEAVE) == 0,
+                "gemm_forward_cuda_new (HIP) requires K % 128 == 0 and N % 8 == 0.");
     dim3 num_blocks(num_out_channels / N_PER_BLOCK / K_INTERLEAVE);
     dim3 num_threads(BLOCK_SIZE);
     gemm_w4a16_hip<N_PER_BLOCK, BLOCK_SIZE, 128, ctype><<<num_blocks, num_threads>>>(
