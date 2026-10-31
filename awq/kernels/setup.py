@@ -75,6 +75,19 @@ sources = [
 
 # The W8A8 GEMM calls hipBLASLt directly on ROCm.
 libraries = ["hipblaslt"] if IS_ROCM else []
+extra_link_args = []
+
+if IS_ROCM and os.name == "nt":
+    # Some Windows ROCm SDKs ship the hipBLASLt import library only as
+    # libhipblaslt.dll.a, which link.exe does not find as "hipblaslt".
+    # Pass it by path when hipblaslt.lib is absent.
+    from torch.utils.cpp_extension import ROCM_HOME
+
+    rocm_lib_dir = os.path.join(ROCM_HOME, "lib")
+    hipblaslt_dll_a = os.path.join(rocm_lib_dir, "libhipblaslt.dll.a")
+    if not os.path.exists(os.path.join(rocm_lib_dir, "hipblaslt.lib")) and os.path.exists(hipblaslt_dll_a):
+        libraries = []
+        extra_link_args = [hipblaslt_dll_a]
 
 if IS_ROCM:
     # On ROCm, torch compiles .cpp files with the host compiler (MSVC on
@@ -105,6 +118,7 @@ setup(
             sources=sources,
             extra_compile_args=extra_compile_args,
             libraries=libraries,
+            extra_link_args=extra_link_args,
         ),
     ],
     cmdclass={"build_ext": BuildExtension},
